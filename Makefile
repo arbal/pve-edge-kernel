@@ -6,7 +6,8 @@ KERNEL_PATCHLEVEL=19
 # rebuild packages with new KREL and run 'make abiupdate'
 KREL=1
 
-PKGREL=1
+PKGREL=2
+PKGRELLOCAL=1
 
 KERNEL_MAJMIN=$(KERNEL_MAJ).$(KERNEL_MIN)
 KERNEL_VER=$(KERNEL_MAJMIN).$(KERNEL_PATCHLEVEL)
@@ -22,10 +23,9 @@ endif
 # Default to generic micro architecture
 PVE_BUILD_TYPE ?= generic
 
-# Append Linux build type to EXTRAVERSION
 ifneq (${PVE_BUILD_TYPE},generic)
 	_ := $(info Using build type: ${PVE_BUILD_TYPE})
-	EXTRAVERSION:=${EXTRAVERSION}-${PVE_BUILD_TYPE}
+	PKGRELFULL:=${PKGRELFULL}+${PVE_BUILD_TYPE}${PKGRELLOCAL}
 endif
 
 KVNAME=${KERNEL_VER}${EXTRAVERSION}
@@ -47,7 +47,7 @@ SKIPABI=0
 
 BUILD_DIR=build
 
-KERNEL_SRC=linux-stable
+KERNEL_SRC=ubuntu-mainline
 KERNEL_SRC_SUBMODULE=submodules/$(KERNEL_SRC)
 KERNEL_CFG_ORG=config-${KERNEL_VER}.org
 
@@ -60,9 +60,9 @@ MODULE_DIRS=${ZFSDIR}
 # exported to debian/rules via debian/rules.d/dirs.mk
 DIRS=KERNEL_SRC ZFSDIR MODULES
 
-DST_DEB=${PACKAGE}_${KERNEL_VER}-${PKGREL}_${ARCH}.deb
-HDR_DEB=${HDRPACKAGE}_${KERNEL_VER}-${PKGREL}_${ARCH}.deb
-LINUX_TOOLS_DEB=linux-tools-$(KERNEL_MAJMIN)_${KERNEL_VER}-${PKGREL}_${ARCH}.deb
+DST_DEB=${PACKAGE}_${KERNEL_VER}-${PKGRELFULL}_${ARCH}.deb
+HDR_DEB=${HDRPACKAGE}_${KERNEL_VER}-${PKGRELFULL}_${ARCH}.deb
+LINUX_TOOLS_DEB=linux-tools-$(KERNEL_MAJMIN)_${KERNEL_VER}-${PKGRELFULL}_${ARCH}.deb
 
 DEBS=${DST_DEB} ${HDR_DEB} ${LINUX_TOOLS_DEB}
 
@@ -85,9 +85,6 @@ artifacts.txt:
 ${LINUX_TOOLS_DEB} ${HDR_DEB}: ${DST_DEB}
 ${DST_DEB}: ${BUILD_DIR}.prepared
 	cd ${BUILD_DIR}; dpkg-buildpackage --jobs=auto -b -uc -us
-	lintian ${DST_DEB}
-	#lintian ${HDR_DEB}
-	lintian ${LINUX_TOOLS_DEB}
 
 ${BUILD_DIR}.prepared: $(addsuffix .prepared,${KERNEL_SRC} ${MODULES} debian)
 	cp -a fwlist-previous ${BUILD_DIR}/
@@ -104,29 +101,35 @@ debian.prepared: debian
 	echo "KVNAME=${KVNAME}" >> ${BUILD_DIR}/debian/rules.d/env.mk
 	echo "KERNEL_MAJMIN=${KERNEL_MAJMIN}" >> ${BUILD_DIR}/debian/rules.d/env.mk
 	cd ${BUILD_DIR}; debian/rules debian/control
+ifneq (${PVE_BUILD_TYPE},generic)
+	cd ${BUILD_DIR}; debchange -l +${PVE_BUILD_TYPE} -D edge --force-distribution -U -M "Specialization for ${PVE_BUILD_TYPE}"
+endif
 	touch $@
+
+PVE_PATCHES=$(wildcard patches/pve/*.patch)
 
 ${KERNEL_SRC}.prepared: ${KERNEL_SRC_SUBMODULE}
 	rm -rf ${BUILD_DIR}/${KERNEL_SRC} $@
 	mkdir -p ${BUILD_DIR}
 	cp -a ${KERNEL_SRC_SUBMODULE} ${BUILD_DIR}/${KERNEL_SRC}
-	set -e; cd ${BUILD_DIR}/${KERNEL_SRC}; for patch in ../../patches/ubuntu/*.patch; do echo "applying Ubuntu patch '$$patch'" && patch -p1 < $${patch}; done
 # TODO: split for archs, track and diff in our repository?
 	cat ${BUILD_DIR}/${KERNEL_SRC}/debian.master/config/config.common.ubuntu ${BUILD_DIR}/${KERNEL_SRC}/debian.master/config/${ARCH}/config.common.${ARCH} ${BUILD_DIR}/${KERNEL_SRC}/debian.master/config/${ARCH}/config.flavour.generic > ${KERNEL_CFG_ORG}
 	cp ${KERNEL_CFG_ORG} ${BUILD_DIR}/${KERNEL_SRC}/.config
 	sed -i ${BUILD_DIR}/${KERNEL_SRC}/Makefile -e 's/^EXTRAVERSION.*$$/EXTRAVERSION=${EXTRAVERSION}/'
 	rm -rf ${BUILD_DIR}/${KERNEL_SRC}/debian ${BUILD_DIR}/${KERNEL_SRC}/debian.master
-	set -e; cd ${BUILD_DIR}/${KERNEL_SRC}; for patch in ../../patches/pve/*.patch; do echo "applying PVE patch '$$patch'" && patch -p1 < $${patch}; done
+	set -e; cd ${BUILD_DIR}/${KERNEL_SRC}; for patch in ${PVE_PATCHES}; do echo "applying PVE patch '$$patch'" && patch -p1 < ../../$${patch}; done
 	touch $@
 
 ${MODULES}.prepared: $(addsuffix .prepared,${MODULE_DIRS})
 	touch $@
 
+ZFS_PATCHES=$(wildcard patches/zfs/*.patch)
+
 ${ZFSDIR}.prepared: ${ZFSONLINUX_SUBMODULE}
 	rm -rf ${BUILD_DIR}/${MODULES}/${ZFSDIR} ${BUILD_DIR}/${MODULES}/tmp $@
 	mkdir -p ${BUILD_DIR}/${MODULES}/tmp
 	cp -a ${ZFSONLINUX_SUBMODULE}/* ${BUILD_DIR}/${MODULES}/tmp
-	# set -e; cd ${BUILD_DIR}/${MODULES}/tmp/upstream; for patch in ../../../../patches/zfsonlinux/*.patch; do echo "applying patch '$$patch'" && patch -p1 < $${patch}; done
+	set -e; cd ${BUILD_DIR}/${MODULES}/tmp/upstream; for patch in ${ZFS_PATCHES}; do echo "applying patch '$$patch'" && patch -p1 < ../../../../$${patch}; done
 	cd ${BUILD_DIR}/${MODULES}/tmp; make kernel
 	rm -rf ${BUILD_DIR}/${MODULES}/tmp
 	touch ${ZFSDIR}.prepared
@@ -153,4 +156,4 @@ abi-tmp-${KVNAME}:
 .PHONY: clean
 clean:
 	rm -rf *~ build *.prepared ${KERNEL_CFG_ORG}
-	rm -f *.deb *.changes *.buildinfo
+	rm -f *.deb *.changes *.buildinfo release.txt artifacts.txt

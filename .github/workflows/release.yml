@@ -12,20 +12,20 @@ jobs:
         include:
           - build_type: 'generic'
             build_cc: gcc-10
-            build_cflags: '-O3'
+            build_cflags: ''
           - build_type: zen2
             build_cc: gcc-10
-            build_cflags: '-O3 -march=znver2'
+            build_cflags: '-march=znver2'
           - build_type: cascadelake
             build_cc: gcc-10
-            build_cflags: '-O3 -march=cascadelake'
+            build_cflags: '-march=cascadelake'
     steps:
     - name: Checkout Sources
       uses: actions/checkout@v2
       with:
           submodules: recursive
     - name: Build Kernel
-      run: PATH="/usr/lib/ccache:${PATH}" make
+      run: make
       env:
           PVE_BUILD_TYPE: ${{ matrix.build_type }}
           PVE_BUILD_CC: ${{ matrix.build_cc }}
@@ -75,5 +75,6 @@ jobs:
         files: |
             artifacts/debs-generic/pve-edge-headers-*.deb
             artifacts/debs-generic/linux-tools-*.deb
+            artifacts/debs-generic/pve-kernel-libc-*.deb
             artifacts/debs-*/pve-edge-kernel-*.deb
 
